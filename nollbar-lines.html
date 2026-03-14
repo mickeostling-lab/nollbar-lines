@@ -199,10 +199,8 @@
 
           if (drawY < y2) lineDone = false;
 
-          // In pour mode, extend the end of each segment downward
-          const extendedEnd = introComplete
-            ? Math.min(visibleEnd + pourExtend[i], H)
-            : visibleEnd;
+          // Extend the end of each segment downward when pouring
+          const extendedEnd = Math.min(visibleEnd + pourExtend[i], H);
 
           ctx.beginPath();
           ctx.moveTo(col.x + 0.5, y1);
@@ -218,27 +216,25 @@
         introComplete = true;
       }
 
-      // Pour interaction after intro
-      if (introComplete) {
-        for (let i = 0; i < TOTAL_LINES; i++) {
-          const col = allSegments[i];
-          const lineX = col.x + 0.5;
+      // Pour interaction — active immediately on lines that have started
+      for (let i = 0; i < linesStarted && i < TOTAL_LINES; i++) {
+        const col = allSegments[i];
+        const lineX = col.x + 0.5;
 
-          // Check if mouse is near this line
-          const dx = Math.abs(mouseX - lineX);
-          if (dx < MOUSE_RADIUS) {
-            // Activate or boost pour speed
-            if (pourSpeed[i] === 0) {
-              pourSpeed[i] = POUR_BASE_SPEED;
-            } else {
-              pourSpeed[i] += POUR_BOOST * (1 - dx / MOUSE_RADIUS) * 0.1;
-            }
+        // Check if mouse is near this line
+        const dx = Math.abs(mouseX - lineX);
+        if (dx < MOUSE_RADIUS) {
+          // Activate or boost pour speed
+          if (pourSpeed[i] === 0) {
+            pourSpeed[i] = POUR_BASE_SPEED;
+          } else {
+            pourSpeed[i] += POUR_BOOST * (1 - dx / MOUSE_RADIUS) * 0.1;
           }
+        }
 
-          // Apply pour
-          if (pourSpeed[i] > 0) {
-            pourExtend[i] += pourSpeed[i];
-          }
+        // Apply pour
+        if (pourSpeed[i] > 0) {
+          pourExtend[i] += pourSpeed[i];
         }
       }
 
