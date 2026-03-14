@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>noll.bar - Line Draw</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; height: 100vh; width: 100vw; overflow: hidden; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+  <canvas id="draw"></canvas>
+
+  <script>
+    const canvas = document.getElementById('draw');
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const LINE_W = 5;
+    const GAP = 5;
+    const STEP = LINE_W + GAP;
+    const TOTAL_LINES = Math.ceil(W / STEP);
+    const BOTTOM_LINE = H - 80; // all bottles stand on this line
+
+    // Fixed sizes in grid units (1 unit = STEP = 10px)
+    // Short bottle: 9 lines wide, has neck
+    // Medium bottle: 8 lines wide, taller, has neck
+    // Can: 5 lines wide, shorter than short bottle, no neck (just a rectangle)
+    const TYPES = {
+      shortBottle: { bodyW: 9 * STEP, bodyH: 120, neckW: 3 * STEP, neckH: 40 },
+      mediumBottle: { bodyW: 8 * STEP, bodyH: 220, neckW: 3 * STEP, neckH: 50 },
+      can: { bodyW: 5 * STEP, bodyH: 80, neckW: 0, neckH: 0 },
+    };
+
+    function generateItems(count) {
+      const items = [];
+      const margin = 80;
+      const usableW = W - margin * 2;
+      const typeKeys = ['shortBottle', 'mediumBottle', 'can'];
+
+      for (let i = 0; i < count; i++) {
+        const type = typeKeys[Math.floor(Math.random() * typeKeys.length)];
+        const t = TYPES[type];
+        const x = margin + (i + 0.3 + Math.random() * 0.4) * (usableW / count);
+        items.push({ x, ...t });
+      }
+      return items;
+    }
+
+    const bottles = generateItems(10 + Math.floor(Math.random() * 5));
+
+    // Rasterize shapes to an offscreen canvas for hit testing
+    const hitCanvas = document.createElement('canvas');
+    hitCanvas.width = W;
+    hitCanvas.height = H;
+    const hitCtx = hitCanvas.getContext('2d');
+    hitCtx.fillStyle = '#fff';
+
+    // Draw "noll.bar" text — sized to fill screen width with padding
+    const TEXT_PADDING = 60;
+    const textLabel = 'noll.bar';
+    hitCtx.font = 'bold 200px Inter, -apple-system, sans-serif';
+    // Measure and scale to fit
+    let measure = hitCtx.measureText(textLabel);
+    const targetW = W - TEXT_PADDING * 2;
+    const fontSize = Math.floor(200 * (targetW / measure.width));
+    hitCtx.font = `300 ${fontSize}px Inter, -apple-system, sans-serif`;
+    measure = hitCtx.measureText(textLabel);
+    // Position text above bottles, vertically centered in available space
+    const textH = measure.actualBoundingBoxAscent + measure.actualBoundingBoxDescent;
+    const bottleZoneTop = BOTTOM_LINE - 270; // tallest bottle area
+    const textY = (bottleZoneTop + measure.actualBoundingBoxAscent) / 2 + TEXT_PADDING / 2;
+    const textX = (W - measure.width) / 2;
+    hitCtx.fillText(textLabel, textX, textY);
+
+    // Draw bottles/cans
+    bottles.forEach(b => {
+      const cx = b.x;
+      const bottom = BOTTOM_LINE;
+      const bodyTop = bottom - b.bodyH;
+      const hw = b.bodyW / 2;
+
+      if (b.neckW > 0) {
+        // Bottle with neck
+        const neckTop = bodyTop - b.neckH;
+        const nhw = b.neckW / 2;
+        hitCtx.beginPath();
+        hitCtx.moveTo(cx - hw, bottom);
+        hitCtx.lineTo(cx - hw, bodyTop);
+        hitCtx.lineTo(cx - nhw, bodyTop);
+        hitCtx.lineTo(cx - nhw, neckTop);
+        hitCtx.lineTo(cx + nhw, neckTop);
+        hitCtx.lineTo(cx + nhw, bodyTop);
+        hitCtx.lineTo(cx + hw, bodyTop);
+        hitCtx.lineTo(cx + hw, bottom);
+        hitCtx.closePath();
+        hitCtx.fill();
+      } else {
+        // Can - simple rectangle
+        hitCtx.fillRect(cx - hw, bodyTop, b.bodyW, b.bodyH);
+      }
+    });
+
+    // Read entire hit image once for fast lookup
+    const hitData = hitCtx.getImageData(0, 0, W, H).data;
+    function isBottle(x, y) {
+      const idx = (y * W + x) * 4;
+      return hitData[idx] > 128;
+    }
+
+    // Precompute draw segments for each column
+    const allSegments = [];
+    for (let i = 0; i < TOTAL_LINES; i++) {
+      const x = i * STEP;
+      const segments = [];
+      let drawing = false;
+      let segStart = 0;
+
+      for (let y = 0; y < H; y++) {
+        const inside = isBottle(Math.min(x, W - 1), y);
+        if (!drawing && !inside) {
+          segStart = y;
+          drawing = true;
+        } else if (drawing && (inside || y === H - 1)) {
+          segments.push([segStart, inside ? y : y + 1]);
+          drawing = false;
+        }
+      }
+      allSegments.push({ x, segments });
+    }
+
+    // Animation state
+    const lineStartTime = new Float32Array(TOTAL_LINES).fill(-1);
+
+    const SWEEP_DURATION = 2500;
+    const LINE_SPEED = 12; // px per ms for initial draw
+
+    let animStart = null;
+    let introComplete = false;
+
+    // Pour state per line: speed the line extends downward through gaps
+    const pourSpeed = new Float32Array(TOTAL_LINES); // current pour speed (px per frame)
+    const pourExtend = new Float32Array(TOTAL_LINES); // extra px added below each segment end
+    const POUR_BASE_SPEED = 0.5; // initial slow pour speed
+    const POUR_BOOST = 0.8; // speed added each time mouse hits the line
+    const MOUSE_RADIUS = 30; // px radius around mouse that triggers pour
+
+    let mouseX = -1000;
+    let mouseY = -1000;
+
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      mouseX = e.clientX - rect.left;
+      mouseY = e.clientY - rect.top;
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      mouseX = -1000;
+      mouseY = -1000;
+    });
+
+    function render(now) {
+      if (!animStart) animStart = now;
+      const elapsed = now - animStart;
+      const sweepProgress = Math.min(elapsed / SWEEP_DURATION, 1);
+      const linesStarted = Math.floor(sweepProgress * TOTAL_LINES);
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = LINE_W;
+
+      let introDone = true;
+
+      for (let i = 0; i < TOTAL_LINES; i++) {
+        const col = allSegments[i];
+        if (i >= linesStarted) { introDone = false; continue; }
+
+        // Start time for this line
+        if (lineStartTime[i] < 0) lineStartTime[i] = now;
+        const lineElapsed = now - lineStartTime[i];
+
+        // How far down has this line drawn (in pixels from top)
+        const drawY = lineElapsed * LINE_SPEED;
+
+        let lineDone = true;
+
+        col.segments.forEach(([y1, y2]) => {
+          if (drawY < y1) { lineDone = false; return; }
+
+          const visibleEnd = Math.min(drawY, y2);
+          if (visibleEnd <= y1) return;
+
+          if (drawY < y2) lineDone = false;
+
+          // In pour mode, extend the end of each segment downward
+          const extendedEnd = introComplete
+            ? Math.min(visibleEnd + pourExtend[i], H)
+            : visibleEnd;
+
+          ctx.beginPath();
+          ctx.moveTo(col.x + 0.5, y1);
+          ctx.lineTo(col.x + 0.5, extendedEnd);
+          ctx.stroke();
+        });
+
+        if (!lineDone) introDone = false;
+      }
+
+      // Check if intro just completed
+      if (introDone && !introComplete) {
+        introComplete = true;
+      }
+
+      // Pour interaction after intro
+      if (introComplete) {
+        for (let i = 0; i < TOTAL_LINES; i++) {
+          const col = allSegments[i];
+          const lineX = col.x + 0.5;
+
+          // Check if mouse is near this line
+          const dx = Math.abs(mouseX - lineX);
+          if (dx < MOUSE_RADIUS) {
+            // Activate or boost pour speed
+            if (pourSpeed[i] === 0) {
+              pourSpeed[i] = POUR_BASE_SPEED;
+            } else {
+              pourSpeed[i] += POUR_BOOST * (1 - dx / MOUSE_RADIUS) * 0.1;
+            }
+          }
+
+          // Apply pour
+          if (pourSpeed[i] > 0) {
+            pourExtend[i] += pourSpeed[i];
+          }
+        }
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
