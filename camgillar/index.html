@@ -428,9 +428,9 @@
   <!-- HERO -->
   <section class="hero">
     <svg class="hero-lines" viewBox="0 0 1440 900" preserveAspectRatio="xMaxYMin slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <rect x="1355" y="-80" width="70" height="1100" fill="#3E3C39" transform="rotate(30,1420,-80)"/>
-      <rect x="1355" y="-80" width="70" height="1100" fill="#797572" transform="rotate(15,1420,-80)"/>
-      <rect x="1355" y="-80" width="70" height="1100" fill="#C8C5C0" transform="rotate(0,1420,-80)"/>
+      <rect id="line-a" x="1355" y="-80" width="70" height="1100" fill="#3E3C39" transform="rotate(30,1420,-80)"/>
+      <rect id="line-b" x="1355" y="-80" width="70" height="1100" fill="#797572" transform="rotate(15,1420,-80)"/>
+      <rect id="line-c" x="1355" y="-80" width="70" height="1100" fill="#C8C5C0" transform="rotate(0,1420,-80)"/>
     </svg>
     <div class="hero-content">
       <p class="hero-label">Brisk River</p>
@@ -499,5 +499,50 @@
     <p class="footer-copy">© 2026 noll.bar</p>
   </footer>
 
+  <script>
+    (function () {
+      const PX = 1420, PY = -80; // shared pivot point for all lines
+
+      const lines = [
+        { el: document.getElementById('line-a'), base: 30, freqs: [1.3, 2.9], phases: [0,       1.2] },
+        { el: document.getElementById('line-b'), base: 15, freqs: [1.7, 3.4], phases: [0.8,    2.1] },
+        { el: document.getElementById('line-c'), base:  0, freqs: [2.2, 1.6], phases: [1.5,    0.4] },
+      ];
+
+      const BASE_AMP  = 0.25; // resting tremor (degrees)
+      const HOVER_AMP = 3.2;  // hover shake (degrees)
+      const LERP_SPD  = 0.07; // transition smoothness
+
+      let amp    = BASE_AMP;
+      let target = BASE_AMP;
+      let t      = 0;
+
+      const hero = document.querySelector('.hero');
+      hero.addEventListener('mouseenter', () => { target = HOVER_AMP; });
+      hero.addEventListener('mouseleave', () => { target = BASE_AMP;  });
+
+      // Also works on touch — tap to toggle
+      hero.addEventListener('touchstart', () => { target = HOVER_AMP; }, { passive: true });
+      hero.addEventListener('touchend',   () => { target = BASE_AMP;  }, { passive: true });
+
+      function tick() {
+        t   += 0.012;
+        amp += (target - amp) * LERP_SPD;
+
+        lines.forEach(({ el, base, freqs, phases }) => {
+          // Sum two sine waves per line for organic feel
+          const offset = amp * (
+            0.6 * Math.sin(t * freqs[0] * Math.PI * 2 + phases[0]) +
+            0.4 * Math.sin(t * freqs[1] * Math.PI * 2 + phases[1])
+          );
+          el.setAttribute('transform', `rotate(${base + offset},${PX},${PY})`);
+        });
+
+        requestAnimationFrame(tick);
+      }
+
+      requestAnimationFrame(tick);
+    })();
+  </script>
 </body>
 </html>
